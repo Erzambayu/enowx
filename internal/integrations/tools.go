@@ -31,7 +31,7 @@ func applyClaude(base, key, model string) error {
 		return err
 	}
 	env := asMap(m, "env")
-	env["ANTHROPIC_BASE_URL"] = baseNoV1(base) // CLI appends /v1/messages
+	env["ANTHROPIC_BASE_URL"] = anthropicBase(base) // CLI appends /v1/messages → /anthropic/v1/messages
 	env["ANTHROPIC_AUTH_TOKEN"] = key
 	env["ANTHROPIC_MODEL"] = model
 	// Map the model to every tier so tier-specific requests route to us too.

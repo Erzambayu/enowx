@@ -1,10 +1,37 @@
 package integrations
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+// Claude Code appends /v1/messages, so ANTHROPIC_BASE_URL must carry /anthropic
+// (enx serves the Anthropic endpoint at /anthropic/v1/messages, not /v1/messages).
+func TestClaudeBaseHasAnthropicPath(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	spec, _ := SpecByKey("claude")
+	cases := map[string]string{
+		"http://localhost:1430":           "http://localhost:1430/anthropic",
+		"http://localhost:1430/v1":        "http://localhost:1430/anthropic",
+		"https://x.trycloudflare.com":     "https://x.trycloudflare.com/anthropic",
+		"http://localhost:1430/anthropic": "http://localhost:1430/anthropic",
+	}
+	for in, want := range cases {
+		if err := Apply(spec, ApplyRequest{BaseURL: in, APIKey: "enx-x", Model: "clc/claude-sonnet-5"}); err != nil {
+			t.Fatalf("apply %s: %v", in, err)
+		}
+		b, _ := os.ReadFile(filepath.Join(tmp, ".claude/settings.json"))
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		env, _ := m["env"].(map[string]any)
+		if got, _ := env["ANTHROPIC_BASE_URL"].(string); got != want {
+			t.Errorf("base %q → ANTHROPIC_BASE_URL=%q, want %q", in, got, want)
+		}
+	}
+}
 
 // applyClaude → connected → reset, against a temp HOME.
 func TestClaudeRoundTrip(t *testing.T) {

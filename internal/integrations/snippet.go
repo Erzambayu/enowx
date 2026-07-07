@@ -24,7 +24,7 @@ func Snippets(s Spec, req ApplyRequest) []Snippet {
 	case "claude":
 		return []Snippet{{Path: "~/.claude/settings.json", Format: "json", Content: j(map[string]any{
 			"env": map[string]any{
-				"ANTHROPIC_BASE_URL": baseNoV1(req.BaseURL), "ANTHROPIC_AUTH_TOKEN": req.APIKey,
+				"ANTHROPIC_BASE_URL": anthropicBase(req.BaseURL), "ANTHROPIC_AUTH_TOKEN": req.APIKey,
 				"ANTHROPIC_MODEL": model, "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
 				"ANTHROPIC_DEFAULT_SONNET_MODEL": model, "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
 			},

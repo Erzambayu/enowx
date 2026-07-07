@@ -123,6 +123,18 @@ func baseNoV1(base string) string {
 	return strings.TrimSuffix(b, "/v1")
 }
 
+// anthropicBase returns the gateway's Anthropic-compatible base for Claude Code:
+// the gateway root + "/anthropic". Claude Code appends "/v1/messages", so this
+// yields "<gateway>/anthropic/v1/messages", which is where enx serves it (a plain
+// "<gateway>/v1/messages" is NOT the Anthropic endpoint).
+func anthropicBase(base string) string {
+	b := baseNoV1(base)
+	if strings.HasSuffix(b, "/anthropic") {
+		return b
+	}
+	return b + "/anthropic"
+}
+
 // isOurBase reports whether a base URL already points at a gateway of ours: a
 // localhost/loopback host, or a value that matches the configured base.
 func isOurBase(cfgURL, ourBase string) bool {
