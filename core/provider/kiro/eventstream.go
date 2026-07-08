@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/enowdev/enowx/core/model"
 )
@@ -15,12 +16,31 @@ import (
 // are length-prefixed with CRC-checked prelude and message; each carries a JSON
 // payload tagged by the ":event-type" header.
 type stream struct {
-	resp *http.Response
-	buf  []byte
-	done bool
+	resp    *http.Response
+	buf     []byte
+	done    bool
+	reverse map[string]string // sanitized→original tool name
+
+	// tool-call accumulation: CodeWhisperer streams a tool's input as JSON
+	// fragments across several toolUseEvent frames, keyed by toolUseId.
+	toolIdx  int
+	toolSeq  []string          // toolUseId in first-seen order
+	toolName map[string]string // toolUseId → name
+	toolArgs map[string]string // toolUseId → accumulated input JSON
+	toolIx      map[string]int    // toolUseId → stream index
+	sawTool     bool
+	pendingDone bool // a Done event is owed after a tool-calls finish event
 }
 
-func newStream(resp *http.Response) *stream { return &stream{resp: resp} }
+func newStream(resp *http.Response, reverse map[string]string) *stream {
+	return &stream{
+		resp:     resp,
+		reverse:  reverse,
+		toolName: map[string]string{},
+		toolArgs: map[string]string{},
+		toolIx:   map[string]int{},
+	}
+}
 
 func (s *stream) Close() error { return s.resp.Body.Close() }
 
@@ -41,6 +61,18 @@ func (s *stream) Recv() (model.Event, error) {
 		if err == io.EOF {
 			if !s.done {
 				s.done = true
+				// Flush any accumulated tool calls as a final finish event before
+				// signalling done, so the client sees FinishReason=tool_calls.
+				if ev, ok := s.flushToolCalls(); ok {
+					// Re-queue the Done for the next Recv by leaving s.done set and
+					// returning the finish event now.
+					s.pendingDone = true
+					return ev, nil
+				}
+				return model.Event{Type: model.EventDone}, nil
+			}
+			if s.pendingDone {
+				s.pendingDone = false
 				return model.Event{Type: model.EventDone}, nil
 			}
 			return model.Event{}, io.EOF
@@ -64,7 +96,7 @@ func (s *stream) next() (model.Event, bool, error) {
 		}
 		s.buf = s.buf[consumed:]
 
-		ev, meaningful := frameToEvent(frame)
+		ev, meaningful := s.frameToEvent(frame)
 		if meaningful {
 			return ev, true, nil
 		}
@@ -131,7 +163,7 @@ func parseHeaders(b []byte) map[string]string {
 	return h
 }
 
-func frameToEvent(f frame) (model.Event, bool) {
+func (s *stream) frameToEvent(f frame) (model.Event, bool) {
 	if f.msgType == "exception" {
 		var ex struct {
 			Message string `json:"message"`
@@ -152,6 +184,30 @@ func frameToEvent(f frame) (model.Event, bool) {
 		if json.Unmarshal(f.payload, &v) == nil && v.Content != "" {
 			return model.Event{Type: model.EventDelta, Text: v.Content, Model: v.ModelID}, true
 		}
+	case "toolUseEvent":
+		// CodeWhisperer streams a tool call as one or more toolUseEvent frames:
+		// the first carries toolUseId + name, subsequent frames append `input`
+		// fragments, and the last has stop=true. We accumulate here and flush the
+		// complete calls at end-of-stream.
+		var v struct {
+			ToolUseID string `json:"toolUseId"`
+			Name      string `json:"name"`
+			Input     string `json:"input"`
+			Stop      bool   `json:"stop"`
+		}
+		if json.Unmarshal(f.payload, &v) == nil && v.ToolUseID != "" {
+			if _, seen := s.toolIx[v.ToolUseID]; !seen {
+				s.toolIx[v.ToolUseID] = s.toolIdx
+				s.toolIdx++
+				s.toolSeq = append(s.toolSeq, v.ToolUseID)
+				s.sawTool = true
+			}
+			if v.Name != "" {
+				s.toolName[v.ToolUseID] = v.Name
+			}
+			s.toolArgs[v.ToolUseID] += v.Input
+			// Accumulate silently; nothing meaningful to emit per-fragment.
+		}
 	case "metadataEvent":
 		var v struct {
 			TokenUsage struct {
@@ -167,4 +223,27 @@ func frameToEvent(f frame) (model.Event, bool) {
 		}
 	}
 	return model.Event{}, false
+}
+
+// flushToolCalls builds a single finish event carrying every accumulated tool
+// call. Returns ok=false if no tool calls were seen.
+func (s *stream) flushToolCalls() (model.Event, bool) {
+	if !s.sawTool || len(s.toolSeq) == 0 {
+		return model.Event{}, false
+	}
+	calls := make([]model.ToolCallDelta, 0, len(s.toolSeq))
+	for _, id := range s.toolSeq {
+		name := s.toolName[id]
+		if orig, ok := s.reverse[name]; ok {
+			name = orig
+		}
+		args := s.toolArgs[id]
+		if strings.TrimSpace(args) == "" {
+			args = "{}"
+		}
+		calls = append(calls, model.ToolCallDelta{
+			Index: s.toolIx[id], ID: id, Name: name, ArgsDelta: args,
+		})
+	}
+	return model.Event{Type: model.EventDelta, ToolCalls: calls, FinishReason: "tool_calls"}, true
 }

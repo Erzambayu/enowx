@@ -21,6 +21,16 @@ type oaiMsg struct {
 	Content    json.RawMessage `json:"content"`
 	ToolCallID string          `json:"tool_call_id"`
 	Name       string          `json:"name"`
+	ToolCalls  []oaiToolCall   `json:"tool_calls"`
+}
+
+type oaiToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 type oaiTool struct {
@@ -48,9 +58,24 @@ func fromOpenAIChat(body []byte) (*model.Request, error) {
 		Raw:         body,
 	}
 	for _, m := range in.Messages {
+		parts := oaiContentToParts(m.Content, m.ToolCallID)
+		// An assistant message may carry tool_calls alongside (or instead of)
+		// text content; turn each into a tool_use part so downstream providers
+		// can reconstruct the call in history.
+		for _, tc := range m.ToolCalls {
+			raw, _ := json.Marshal(map[string]any{
+				"id": tc.ID, "name": tc.Function.Name, "arguments": tc.Function.Arguments,
+			})
+			parts = append(parts, model.Part{
+				Type:       "tool_use",
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+				Raw:        raw,
+			})
+		}
 		req.Messages = append(req.Messages, model.Message{
 			Role:  model.Role(m.Role),
-			Parts: oaiContentToParts(m.Content, m.ToolCallID),
+			Parts: parts,
 		})
 	}
 	for _, t := range in.Tools {

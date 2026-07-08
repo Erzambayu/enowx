@@ -50,7 +50,7 @@ func (p *Provider) BuildRequest(req *model.Request, acc provider.Account) (*http
 	if err != nil {
 		return nil, err
 	}
-	body, err := buildPayload(req, am.profileARN(), "")
+	body, reverse, err := buildPayload(req, am.profileARN(), "")
 	if err != nil {
 		return nil, err
 	}
@@ -61,9 +61,12 @@ func (p *Provider) BuildRequest(req *model.Request, acc provider.Account) (*http
 	for k, v := range am.headers(token) {
 		r.Header.Set(k, v)
 	}
+	if len(reverse) > 0 {
+		r = r.WithContext(withReverseNames(r.Context(), reverse))
+	}
 	return r, nil
 }
 
 func (p *Provider) ParseResponse(resp *http.Response, _ *model.Request) (model.Stream, error) {
-	return newStream(resp), nil
+	return newStream(resp, reverseNamesFrom(resp.Request.Context())), nil
 }
