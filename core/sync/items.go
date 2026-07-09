@@ -223,17 +223,25 @@ type syncCombo struct {
 
 // --- apply: pulled items → local rows ---
 
+type fullSyncLookup struct {
+	accounts map[string]bool // shortHash(secret+creds) → true
+	keys     map[string]bool // shortHash(secret) → true
+	proxies  map[string]bool // shortHash(scheme+host+port+username) → true
+	prefixes map[string]bool // custom provider prefix → true
+}
+
 // applyFullItem applies one non-playlist pulled item. Returns true if handled.
-func (m *Manager) applyFullItem(ctx context.Context, ri item) bool {
+// lookup maps, when non-nil, provide O(1) dedup instead of scanning the store.
+func (m *Manager) applyFullItem(ctx context.Context, ri item, lk *fullSyncLookup) bool {
 	switch ri.Type {
 	case typeCustomProvider:
-		return m.applyCustomProvider(ctx, ri)
+		return m.applyCustomProvider(ctx, ri, lk)
 	case typeAccount:
-		return m.applyAccount(ctx, ri)
+		return m.applyAccount(ctx, ri, lk)
 	case typeAPIKey:
-		return m.applyAPIKey(ctx, ri)
+		return m.applyAPIKey(ctx, ri, lk)
 	case typeProxy:
-		return m.applyProxy(ctx, ri)
+		return m.applyProxy(ctx, ri, lk)
 	case typeAlias:
 		return m.applyAlias(ctx, ri)
 	case typeCombo:
@@ -242,7 +250,7 @@ func (m *Manager) applyFullItem(ctx context.Context, ri item) bool {
 	return false
 }
 
-func (m *Manager) applyCustomProvider(ctx context.Context, ri item) bool {
+func (m *Manager) applyCustomProvider(ctx context.Context, ri item, lk *fullSyncLookup) bool {
 	if m.custom == nil {
 		return false
 	}
@@ -270,10 +278,16 @@ func (m *Manager) applyCustomProvider(ctx context.Context, ri item) bool {
 	if json.Unmarshal([]byte(ri.Payload), &cp) != nil {
 		return false
 	}
-	// Upsert by prefix: skip if we already have this prefix, else create + register.
-	for _, e := range existing {
-		if e.Prefix == cp.Prefix {
-			return true // already present (LWW: keep local)
+	if lk != nil && lk.prefixes != nil {
+		if lk.prefixes[cp.Prefix] {
+			return true
+		}
+	} else {
+		// Upsert by prefix: skip if we already have this prefix, else create + register.
+		for _, e := range existing {
+			if e.Prefix == cp.Prefix {
+				return true // already present (LWW: keep local)
+			}
 		}
 	}
 	id, err := m.custom.Create(ctx, cp)
@@ -287,7 +301,7 @@ func (m *Manager) applyCustomProvider(ctx context.Context, ri item) bool {
 	return true
 }
 
-func (m *Manager) applyAccount(ctx context.Context, ri item) bool {
+func (m *Manager) applyAccount(ctx context.Context, ri item, lk *fullSyncLookup) bool {
 	if m.accounts == nil {
 		return false
 	}
@@ -309,6 +323,14 @@ func (m *Manager) applyAccount(ctx context.Context, ri item) bool {
 	if !ri.Encrypted {
 		return false
 	}
+	// Fast-path: skip decryption for accounts we already have locally.
+	// The item id embeds shortHash(secret+creds) which matches the dedup
+	// map key, so we check before any crypto or SQLite work.
+	if lk != nil && lk.accounts != nil {
+		if _, hash, ok := parseAccountID(ri.ItemID); ok && lk.accounts[hash] {
+			return true
+		}
+	}
 	key := m.credKey(ctx)
 	if key == nil {
 		return false
@@ -321,19 +343,21 @@ func (m *Manager) applyAccount(ctx context.Context, ri item) bool {
 	if json.Unmarshal(raw, &sa) != nil {
 		return false
 	}
-	// Dedup: skip if an account with the same secret+creds already exists.
-	existing, _ := m.accounts.List(ctx, sa.Provider)
-	target := shortHash(sa.Secret + fmt.Sprint(sa.Creds))
-	for _, e := range existing {
-		if shortHash(e.Secret+fmt.Sprint(e.Creds)) == target {
-			return true
+	// Fallback dedup when no lookup map was provided (legacy path).
+	if lk == nil || lk.accounts == nil {
+		target := shortHash(sa.Secret + fmt.Sprint(sa.Creds))
+		existing, _ := m.accounts.List(ctx, sa.Provider)
+		for _, e := range existing {
+			if shortHash(e.Secret+fmt.Sprint(e.Creds)) == target {
+				return true
+			}
 		}
 	}
 	_, _ = m.accounts.Add(ctx, store.Account{Provider: sa.Provider, Label: sa.Label, Secret: sa.Secret, Creds: sa.Creds, Status: sa.Status, Disabled: sa.Disabled})
 	return true
 }
 
-func (m *Manager) applyProxy(ctx context.Context, ri item) bool {
+func (m *Manager) applyProxy(ctx context.Context, ri item, lk *fullSyncLookup) bool {
 	if m.proxies == nil {
 		return false
 	}
@@ -366,6 +390,12 @@ func (m *Manager) applyProxy(ctx context.Context, ri item) bool {
 	if json.Unmarshal(raw, &sp) != nil {
 		return false
 	}
+	target := shortHash(sp.Scheme + sp.Host + fmt.Sprint(sp.Port) + sp.Username)
+	if lk != nil && lk.proxies != nil {
+		if lk.proxies[target] {
+			return true
+		}
+	}
 	// Add upserts on identity, so this is idempotent whether or not it exists.
 	_, _ = m.proxies.Add(ctx, store.Proxy{
 		Label: sp.Label, Scheme: sp.Scheme, Host: sp.Host, Port: sp.Port,
@@ -387,7 +417,7 @@ func parseAccountID(id string) (provider, hash string, ok bool) {
 	return rest[:i], rest[i+1:], true
 }
 
-func (m *Manager) applyAPIKey(ctx context.Context, ri item) bool {
+func (m *Manager) applyAPIKey(ctx context.Context, ri item, lk *fullSyncLookup) bool {
 	if m.keys == nil {
 		return false
 	}
@@ -421,8 +451,14 @@ func (m *Manager) applyAPIKey(ctx context.Context, ri item) bool {
 	if json.Unmarshal(raw, &sk) != nil {
 		return false
 	}
-	if existing, _ := m.keys.BySecret(ctx, sk.Secret); existing != nil {
-		return true // already have it
+	if lk != nil && lk.keys != nil {
+		if lk.keys[shortHash(sk.Secret)] {
+			return true
+		}
+	} else {
+		if existing, _ := m.keys.BySecret(ctx, sk.Secret); existing != nil {
+			return true // already have it
+		}
 	}
 	_, _ = m.keys.Add(ctx, store.APIKey{Label: sk.Label, Secret: sk.Secret, TokenLimit: sk.TokenLimit, MaxConcurrent: sk.MaxConcurrent, Enabled: sk.Enabled})
 	return true
