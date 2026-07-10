@@ -119,11 +119,24 @@ func (s *accountStore) UpdateCreds(ctx context.Context, id int64, creds map[stri
 }
 
 func (s *accountStore) Delete(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id)
-	if err == nil {
-		syncbus.Dirty("account")
+	// warmup_logs has no FK to accounts, so removing the account leaves its
+	// warmup history orphaned (unbounded DB bloat). Delete both together.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM warmup_logs WHERE account_id = ?`, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	syncbus.Dirty("account")
+	return nil
 }
 
 func encodeCreds(m map[string]string) string {
