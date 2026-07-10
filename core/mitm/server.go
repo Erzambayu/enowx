@@ -143,7 +143,7 @@ func (s *Server) intercept(w http.ResponseWriter, r *http.Request, tool Tool) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.apiKey)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := gatewayClient.Do(req)
 	if err != nil {
 		s.passthroughBody(w, r, body)
 		return
@@ -200,6 +200,8 @@ var passthroughClient = &http.Client{
 		DialContext: realDialer.DialContext,
 	},
 }
+
+var gatewayClient = &http.Client{Timeout: 5 * time.Minute}
 
 func copyHeaders(dst, src http.Header) {
 	for k, vs := range src {

@@ -278,7 +278,7 @@ func (m *Manager) PublicProfile(ctx context.Context, id string) (string, error) 
 // UserByName resolves a username to a user id (for @mention profile links).
 func (m *Manager) UserByName(ctx context.Context, name string) (string, error) {
 	var raw json.RawMessage
-	if err := m.call(ctx, http.MethodGet, "/users/by-name/"+name, nil, &raw); err != nil {
+	if err := m.call(ctx, http.MethodGet, "/users/by-name/"+url.PathEscape(name), nil, &raw); err != nil {
 		return "", err
 	}
 	return string(raw), nil
@@ -1529,10 +1529,49 @@ func (m *Manager) Sync(ctx context.Context) (pushed, pulled int, err error) {
 	if err := m.call(ctx, http.MethodGet, "/sync/pull?since="+fmt.Sprint(cursor), nil, &pull); err != nil {
 		return pushed, 0, err
 	}
+
+	// Pre-build dedup lookup maps so each pulled item does O(1) checks
+	// instead of scanning the entire store per item (O(n^2) at 1300+ accounts).
+	var lk fullSyncLookup
+	if m.hasFullSync(ctx) {
+		if m.accounts != nil {
+			if all, err := m.accounts.List(ctx, ""); err == nil {
+				lk.accounts = make(map[string]bool, len(all))
+				for _, a := range all {
+					lk.accounts[shortHash(a.Secret+fmt.Sprint(a.Creds))] = true
+				}
+			}
+		}
+		if m.keys != nil {
+			if all, err := m.keys.List(ctx); err == nil {
+				lk.keys = make(map[string]bool, len(all))
+				for _, k := range all {
+					lk.keys[shortHash(k.Secret)] = true
+				}
+			}
+		}
+		if m.proxies != nil {
+			if all, err := m.proxies.List(ctx); err == nil {
+				lk.proxies = make(map[string]bool, len(all))
+				for _, p := range all {
+					lk.proxies[shortHash(p.Scheme+p.Host+fmt.Sprint(p.Port)+p.Username)] = true
+				}
+			}
+		}
+		if m.custom != nil {
+			if all, err := m.custom.List(ctx); err == nil {
+				lk.prefixes = make(map[string]bool, len(all))
+				for _, cp := range all {
+					lk.prefixes[cp.Prefix] = true
+				}
+			}
+		}
+	}
+
 	for _, ri := range pull.Items {
 		if ri.Type != typePlaylist {
 			// Full-sync types (accounts/keys/aliases/custom providers).
-			if m.applyFullItem(ctx, ri) {
+			if m.applyFullItem(ctx, ri, &lk) {
 				pulled++
 			}
 			continue

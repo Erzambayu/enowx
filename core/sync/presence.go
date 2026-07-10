@@ -44,12 +44,18 @@ func (m *Manager) BrowserDisconnected() {
 		close(presenceStop)
 		presenceStop = nil
 		// Best-effort "going offline" so the server doesn't wait for the TTL.
-		go m.Presence(context.Background(), false)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		go func() {
+			defer cancel()
+			m.Presence(ctx, false)
+		}()
 	}
 }
 
 func (m *Manager) presenceLoop(stop <-chan struct{}) {
-	m.Presence(context.Background(), true) // immediate first beat
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.Presence(ctx, true) // immediate first beat
+	cancel()
 	t := time.NewTicker(presenceInterval)
 	defer t.Stop()
 	for {
@@ -57,7 +63,9 @@ func (m *Manager) presenceLoop(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			m.Presence(context.Background(), true)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			m.Presence(ctx, true)
+			cancel()
 		}
 	}
 }
