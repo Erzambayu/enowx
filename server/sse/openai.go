@@ -25,15 +25,12 @@ func WriteOpenAI(w http.ResponseWriter, s model.Stream) {
 
 	for {
 		ev, err := s.Recv()
-		if err == io.EOF {
+		if err == io.EOF || (err == nil && ev.Type == model.EventDone) {
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			fl.Flush()
 			return
 		}
 		if err != nil || ev.Type == model.EventError {
-			return
-		}
-		if ev.Type == model.EventDone {
-			fmt.Fprint(w, "data: [DONE]\n\n")
-			fl.Flush()
 			return
 		}
 		emit(w, fl, chunk(ev))
