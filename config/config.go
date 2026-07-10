@@ -4,6 +4,7 @@ package config
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,7 +33,9 @@ func Load() (Config, error) {
 		c.RuntimeDir = v
 	}
 	if b, err := os.ReadFile(filepath.Join(c.RuntimeDir, "config.json")); err == nil {
-		_ = json.Unmarshal(b, &c)
+		if err := json.Unmarshal(b, &c); err != nil {
+			log.Printf("config: %s/config.json: ignoring malformed JSON: %v", c.RuntimeDir, err)
+		}
 	}
 	if v := os.Getenv("ENOWX_HOST"); v != "" {
 		c.Host = v
