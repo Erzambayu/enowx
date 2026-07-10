@@ -9,14 +9,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/enowdev/enowx/core/mitm"
+	"github.com/enowdev/enowx/core/plugins"
 	"github.com/enowdev/enowx/core/provider"
 	"github.com/enowdev/enowx/core/provider/custommgr"
-	"github.com/enowdev/enowx/core/plugins"
 	"github.com/enowdev/enowx/core/proxy"
 	"github.com/enowdev/enowx/core/suno"
 	syncpkg "github.com/enowdev/enowx/core/sync"
 	"github.com/enowdev/enowx/core/transport"
-	"github.com/enowdev/enowx/core/mitm"
 	"github.com/enowdev/enowx/core/tunnel"
 	"github.com/enowdev/enowx/server/handlers"
 	"github.com/enowdev/enowx/server/middleware"
@@ -273,7 +273,6 @@ func New(addr string, d Deps) *Server {
 		r.Get("/files", files.List)
 		r.Get("/files/watch", files.Watch)
 
-
 		// Terminal profiles (per-terminal credential isolation via HOME).
 		termProfiles := handlers.NewTermProfiles(dash)
 		r.Get("/term-profiles", termProfiles.List)
@@ -489,6 +488,7 @@ func New(addr string, d Deps) *Server {
 			r.Post("/publish", market.Publish)
 			r.Get("/plugins", market.List)
 			r.Post("/install/{id}", market.Install)
+			r.Post("/update/{id}", market.Update)
 		})
 		r.Get("/api/admin/plugin-scan", market.GetScanSettings)
 		r.Put("/api/admin/plugin-scan", market.SaveScanSettings)

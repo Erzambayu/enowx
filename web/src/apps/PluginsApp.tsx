@@ -8,6 +8,7 @@ import { subscribeLive } from "../os/liveBus";
 import { useProfile } from "../os/useProfile";
 import { SignInGate } from "../components/SignInGate";
 import { pluginsApi, marketApi, type PluginManifest, type PluginRuntime, type MarketPlugin } from "../lib/api";
+import { compareVersions } from "../lib/semver";
 
 const RUNTIMES = [
   { id: "python", label: "Python" },
@@ -19,6 +20,7 @@ const RUNTIMES = [
 export function PluginsApp() {
   const [plugins, setPlugins] = useState<PluginManifest[]>([]);
   const [runtimes, setRuntimes] = useState<PluginRuntime[]>([]);
+  const [marketCatalog, setMarketCatalog] = useState<MarketPlugin[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -39,6 +41,9 @@ export function PluginsApp() {
   };
   useEffect(() => {
     load();
+  }, []);
+  useEffect(() => {
+    marketApi.list().then((r) => setMarketCatalog(r?.plugins ?? [])).catch(() => {});
   }, []);
 
   // static + bin need no toolchain (bin ships prebuilt per-OS binaries).
@@ -91,6 +96,8 @@ export function PluginsApp() {
 
   const [tab, setTab] = useState<"mine" | "market">("mine");
 
+  const marketBySlug = new Map(marketCatalog.map((m) => [m.slug, m]));
+
   return (
     <AppShell title="Plugins" subtitle="Build and run your own apps & automations">
       {!isPremium && (
@@ -106,7 +113,7 @@ export function PluginsApp() {
         <button onClick={() => setTab("market")} className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium ${tab === "market" ? "bg-white/12 text-white" : "text-white/50 hover:bg-white/5"}`}><Store className="h-3.5 w-3.5" /> Marketplace</button>
       </div>
 
-      {tab === "market" ? <Marketplace onInstalled={load} /> : (
+      {tab === "market" ? <Marketplace onInstalled={load} installedVersions={new Map(plugins.map((p) => [p.id, p.version ?? ""]))} /> : (
       <>
       <div className="mb-3 flex items-center gap-2">
         <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-black hover:opacity-90">
@@ -158,6 +165,15 @@ export function PluginsApp() {
                   <Tooltip label="Start"><button onClick={() => act(() => pluginsApi.start(p.id), p.id)} disabled={busy === p.id || !runtimeOk(p.runtime)} className="rounded-lg border border-white/10 bg-white/[0.03] p-1.5 text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-40"><Play className="h-3.5 w-3.5" /></button></Tooltip>
                 ))}
                 <Tooltip label="Open folder (edit in your IDE)"><button onClick={() => pluginsApi.reveal(p.id).catch(() => {})} className="rounded-lg border border-white/10 bg-white/[0.03] p-1.5 text-white/55 hover:bg-white/10 hover:text-white"><FolderOpen className="h-3.5 w-3.5" /></button></Tooltip>
+                {(() => {
+                  const listing = marketBySlug.get(p.id);
+                  if (!listing || compareVersions(listing.version, p.version ?? "0") <= 0) return null;
+                  return (
+                    <Tooltip label={`Update to v${listing.version}`}>
+                      <button onClick={() => act(() => marketApi.update(listing.id), p.id)} disabled={busy === p.id} className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-1.5 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40"><Download className="h-3.5 w-3.5" /></button>
+                    </Tooltip>
+                  );
+                })()}
                 <Tooltip label="Publish to marketplace"><button onClick={() => publish(p)} disabled={busy === p.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-1.5 text-white/55 hover:bg-white/10 hover:text-white disabled:opacity-40"><UploadCloud className="h-3.5 w-3.5" /></button></Tooltip>
                 <Tooltip label="Logs"><button onClick={() => setLogsFor(p.id)} className="rounded-lg border border-white/10 bg-white/[0.03] p-1.5 text-white/55 hover:bg-white/10 hover:text-white"><ScrollText className="h-3.5 w-3.5" /></button></Tooltip>
                 <Tooltip label="Delete"><button onClick={() => remove(p)} disabled={busy === p.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-1.5 text-white/55 hover:bg-red-500/30 hover:text-red-200 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button></Tooltip>
@@ -303,8 +319,8 @@ function PluginWindow({ plugin, onClose }: { plugin: PluginManifest; onClose: ()
   );
 }
 
-// Marketplace browses published plugins and installs them locally.
-function Marketplace({ onInstalled }: { onInstalled: () => void }) {
+// Marketplace browses published plugins and installs/updates them locally.
+function Marketplace({ onInstalled, installedVersions }: { onInstalled: () => void; installedVersions: Map<string, string> }) {
   const profile = useProfile();
   const [items, setItems] = useState<MarketPlugin[]>([]);
   const [q, setQ] = useState("");
@@ -352,6 +368,20 @@ function Marketplace({ onInstalled }: { onInstalled: () => void }) {
     }
   };
 
+  const update = async (p: MarketPlugin) => {
+    setBusy(p.id);
+    setError("");
+    try {
+      await marketApi.update(p.id);
+      setNote(`Updated ${p.name} to v${p.version}.`);
+      onInstalled();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "update failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div>
       <div className="mb-3 flex items-center gap-2">
@@ -379,9 +409,24 @@ function Marketplace({ onInstalled }: { onInstalled: () => void }) {
                 <div className="mt-0.5 truncate text-[11px] text-white/45">{p.description || "No description"}</div>
                 <div className="mt-0.5 text-[10px] text-white/30">by {p.display_name || p.username} · {p.install_count} installs</div>
               </div>
-              <button onClick={() => install(p)} disabled={busy === p.id} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/70 hover:bg-white/10 disabled:opacity-40">
-                {busy === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Install
-              </button>
+              {(() => {
+                const installed = installedVersions.get(p.slug);
+                if (installed === undefined) {
+                  return (
+                    <button onClick={() => install(p)} disabled={busy === p.id} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-white/70 hover:bg-white/10 disabled:opacity-40">
+                      {busy === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Install
+                    </button>
+                  );
+                }
+                if (compareVersions(p.version, installed) > 0) {
+                  return (
+                    <button onClick={() => update(p)} disabled={busy === p.id} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40">
+                      {busy === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />} Update
+                    </button>
+                  );
+                }
+                return <span className="shrink-0 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-1.5 text-xs text-white/35">Installed</span>;
+              })()}
             </div>
           ))}
         </div>

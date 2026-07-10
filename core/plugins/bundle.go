@@ -109,6 +109,41 @@ func (m *Manager) Extract(id string, zipBytes []byte) error {
 	return nil
 }
 
+// Update overwrites an existing plugin with a newer bundle. Unlike Extract,
+// it never deletes the folder first, so local-only files survive.
+func (m *Manager) Update(id string, zipBytes []byte) error {
+	if !idRe.MatchString(id) {
+		return fmt.Errorf("invalid plugin id")
+	}
+	dest := filepath.Join(m.dir, id)
+	if _, err := os.Stat(dest); err != nil {
+		return fmt.Errorf("no installed plugin with id %q", id)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil {
+		return fmt.Errorf("invalid bundle: %w", err)
+	}
+	for _, f := range zr.File {
+		if strings.Contains(f.Name, "..") || strings.HasPrefix(f.Name, "/") {
+			return fmt.Errorf("unsafe path in bundle: %s", f.Name)
+		}
+		target := filepath.Join(dest, filepath.FromSlash(f.Name))
+		if f.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		if err := writeZipEntry(f, target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func writeZipEntry(f *zip.File, target string) error {
 	rc, err := f.Open()
 	if err != nil {

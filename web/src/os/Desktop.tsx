@@ -302,23 +302,29 @@ export function Desktop() {
             <div className={`absolute inset-0 ${view === "chat" ? "" : "hidden"}`}>
               <AiChatApp />
             </div>
-            <div className={`absolute inset-0 ${view === "apitest" ? "" : "hidden"}`}>
-              <ApiTestApp />
-            </div>
+            {view === "apitest" && (
+              <div className="absolute inset-0">
+                <ApiTestApp />
+              </div>
+            )}
             <div className={`absolute inset-0 ${view === "apps" ? "" : "hidden"}`}>
               <AppsDrawer apps={drawerApps} onOpen={openApp} onDropToDrawer={(id) => move(id, "drawer")} />
             </div>
-            <div className={`absolute inset-0 overflow-hidden rounded-2xl border border-white/10 bg-[var(--window-bg)]/80 ${view === "marketplace" ? "" : "hidden"}`}>
-              <MarketplaceApp />
-            </div>
-            {isMod && (
-              <div className={`absolute inset-0 overflow-hidden rounded-2xl border border-white/10 bg-[var(--window-bg)]/80 ${view === "admin" ? "" : "hidden"}`}>
+            {view === "marketplace" && (
+              <div className="absolute inset-0 overflow-hidden rounded-2xl border border-white/10 bg-[var(--window-bg)]/80">
+                <MarketplaceApp />
+              </div>
+            )}
+            {isMod && view === "admin" && (
+              <div className="absolute inset-0 overflow-hidden rounded-2xl border border-white/10 bg-[var(--window-bg)]/80">
                 <AdminApp />
               </div>
             )}
-            <div className={`absolute inset-0 overflow-hidden rounded-2xl border border-white/10 bg-[var(--window-bg)]/80 ${view === "docs" ? "" : "hidden"}`}>
-              <DocsApp />
-            </div>
+            {view === "docs" && (
+              <div className="absolute inset-0 overflow-hidden rounded-2xl border border-white/10 bg-[var(--window-bg)]/80">
+                <DocsApp />
+              </div>
+            )}
           </div>
         </div>
       </div>

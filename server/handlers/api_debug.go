@@ -5,6 +5,7 @@ import (
 	"os"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -15,6 +16,7 @@ type Debug struct {
 	version string
 	started time.Time
 	proc    *process.Process
+	mu      sync.Mutex
 }
 
 func NewDebug(version string, started time.Time) *Debug {
@@ -35,12 +37,14 @@ func (h *Debug) Get(w http.ResponseWriter, _ *http.Request) {
 	cpuPct := 0.0
 	var rss uint64
 	if h.proc != nil {
+		h.mu.Lock()
 		if v, err := h.proc.Percent(0); err == nil {
 			cpuPct = v
 		}
 		if mi, err := h.proc.MemoryInfo(); err == nil && mi != nil {
 			rss = mi.RSS
 		}
+		h.mu.Unlock()
 	}
 
 	lastGC := ""

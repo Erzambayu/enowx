@@ -18,12 +18,12 @@ type Manifest struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
-	Icon        string   `json:"icon"`    // lucide name, or "icon.png" in the folder
-	Runtime     string   `json:"runtime"` // go | python | node | static
-	Entry       string   `json:"entry"`   // command entry (ignored for static)
-	UI          string   `json:"ui"`      // path served at /plugins/<id>/ (default public/index.html)
-	Version     string   `json:"version"` // semver, bumped on each marketplace re-publish
-	Permissions []string `json:"permissions,omitempty"`
+	Icon        string   `json:"icon"`                  // lucide name, or "icon.png" in the folder
+	Runtime     string   `json:"runtime"`               // go | python | node | static
+	Entry       string   `json:"entry"`                 // command entry (ignored for static)
+	UI          string   `json:"ui"`                    // path served at /plugins/<id>/ (default public/index.html)
+	Version     string   `json:"version"`               // semver, bumped on each marketplace re-publish
+	Permissions []string `json:"permissions,omitempty"` // "env:full" inherits the parent process env; default is a minimal allow-list (plugins.envAllowList)
 }
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)

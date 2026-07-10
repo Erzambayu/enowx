@@ -401,6 +401,7 @@ export const marketApi = {
   publish: (id: string) => api.post<{ status: string; reason?: string; id?: number; file?: string; updated?: boolean }>("/api/market/publish", { id }),
   list: (q = "") => api.get<{ plugins: MarketPlugin[] }>(`/api/market/plugins${q ? `?q=${encodeURIComponent(q)}` : ""}`),
   install: (id: number) => api.post<{ installed: boolean; id: string }>(`/api/market/install/${id}`),
+  update: (id: number) => api.post<{ updated: boolean; id: string }>(`/api/market/update/${id}`),
 };
 
 export interface PluginScanSettings { ai_review_endpoint: string; ai_review_model: string; ai_review_enabled: boolean; has_key: boolean }

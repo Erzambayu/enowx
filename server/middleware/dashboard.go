@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -242,9 +244,29 @@ func looksForwarded(r *http.Request) bool {
 		h.Get("Cf-Ray") != ""
 }
 
+// originTrusted reports whether a request's Origin header (if any) matches its
+// own Host. A browser cannot forge Origin, so a present-but-mismatched Origin
+// means the request was sent cross-site by a page running in the user's
+// browser (drive-by CSRF) even though the TCP connection itself is loopback.
+// Non-browser callers (curl, the enx CLI, local scripts) never send an Origin
+// header at all, so their requests are unaffected.
+func originTrusted(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
+}
+
 // TrustedLocal reports whether the request genuinely originates on this machine:
-// a loopback TCP peer that did NOT arrive via the tunnel/proxy. Remote requests
-// (including anything through cloudflared) return false and must authenticate.
+// a loopback TCP peer that did NOT arrive via the tunnel/proxy, and — if the
+// request carries an Origin header at all — one that matches this request's
+// own Host. Remote requests (including anything through cloudflared) and
+// cross-site browser requests both return false and must authenticate.
 func TrustedLocal(r *http.Request) bool {
-	return peerIsLoopback(r) && !looksForwarded(r)
+	return peerIsLoopback(r) && !looksForwarded(r) && originTrusted(r)
 }
