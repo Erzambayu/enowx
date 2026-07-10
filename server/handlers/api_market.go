@@ -123,6 +123,40 @@ func (h *Market) Install(w http.ResponseWriter, r *http.Request) {
 	writeData(w, map[string]any{"installed": true, "id": meta.Slug})
 }
 
+// POST /api/market/update/{id} — download the bundle + overwrite an
+// existing install (same flow as Install, but calls Update, not Extract).
+func (h *Market) Update(w http.ResponseWriter, r *http.Request) {
+	if !h.guard(w, r) {
+		return
+	}
+	id := chi.URLParam(r, "id")
+	raw, err := h.sync.InstallPlugin(r.Context(), id)
+	if err != nil {
+		writeAPIErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	var meta struct {
+		BundleURL string `json:"bundle_url"`
+		Slug      string `json:"slug"`
+	}
+	_ = json.Unmarshal([]byte(raw), &meta)
+	if meta.BundleURL == "" || meta.Slug == "" {
+		writeAPIErr(w, http.StatusBadGateway, "missing bundle info")
+		return
+	}
+	zipBytes, err := h.sync.DownloadBundle(r.Context(), meta.BundleURL)
+	if err != nil {
+		writeAPIErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	h.mgr.Stop(meta.Slug)
+	if err := h.mgr.Update(meta.Slug, zipBytes); err != nil {
+		writeAPIErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeData(w, map[string]any{"updated": true, "id": meta.Slug})
+}
+
 // GET /api/admin/marketplace?status= — moderator plugin list (approve/reject queue).
 func (h *Market) AdminPlugins(w http.ResponseWriter, r *http.Request) {
 	if !h.guard(w, r) {
