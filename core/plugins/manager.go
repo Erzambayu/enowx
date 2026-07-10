@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -108,6 +109,40 @@ func (m *Manager) port(id string) int {
 	return 0
 }
 
+// envAllowList is what a plugin gets by default. LookupEnv simply misses
+// whichever names don't apply to the current OS, so no runtime.GOOS branch
+// is needed: PATH lets the plugin's own entry command find its runtime/
+// tools; the rest are what node/python/go and Windows' network stack expect
+// to find a home/cache/temp dir.
+var envAllowList = []string{"PATH", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "SystemRoot"}
+
+func minimalEnv() []string {
+	env := make([]string, 0, len(envAllowList))
+	for _, name := range envAllowList {
+		if v, ok := os.LookupEnv(name); ok {
+			env = append(env, name+"="+v)
+		}
+	}
+	return env
+}
+
+// buildEnv assembles a plugin's child-process environment. A plugin that
+// declares "env:full" in Manifest.Permissions inherits the full parent
+// environment (today's behavior); everything else gets envAllowList only,
+// so it can't read ambient secrets out of enowX's own environment unless it
+// explicitly opts in.
+func buildEnv(man *Manifest, id string, port, enowxPort int) []string {
+	env := minimalEnv()
+	if slices.Contains(man.Permissions, "env:full") {
+		env = os.Environ()
+	}
+	return append(env,
+		"PORT="+strconv.Itoa(port),
+		"ENOWX_PLUGIN_ID="+id,
+		"ENOWX_API=http://127.0.0.1:"+strconv.Itoa(enowxPort),
+	)
+}
+
 // Start spawns a plugin's sidecar (no-op for static plugins).
 func (m *Manager) Start(id string) error {
 	if err := m.authorized(); err != nil {
@@ -153,11 +188,7 @@ func (m *Manager) Start(id string) error {
 	}
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = filepath.Join(m.dir, id)
-	cmd.Env = append(os.Environ(),
-		"PORT="+strconv.Itoa(port),
-		"ENOWX_PLUGIN_ID="+id,
-		"ENOWX_API=http://127.0.0.1:"+strconv.Itoa(m.enowxPort),
-	)
+	cmd.Env = buildEnv(man, id, port, m.enowxPort)
 	hideWindow(cmd)
 
 	pr := &proc{cmd: cmd, port: port, running: true}
