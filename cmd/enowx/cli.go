@@ -184,16 +184,16 @@ func writable(dir string) bool {
 }
 
 func updateCmd(args []string) {
+	if version == "dev" {
+		fmt.Println("this is a dev build — updates are disabled")
+		return
+	}
 	cfg := loadCfg()
 	checkOnly := false
 	for _, a := range args {
 		if a == "--check" {
 			checkOnly = true
 		}
-	}
-	if version == "dev" {
-		fmt.Println("this is a dev build — updates are disabled")
-		return
 	}
 	if !serverUp(cfg) {
 		fmt.Fprintln(os.Stderr, "enx must be running to check/apply updates (enx start)")
